@@ -13,6 +13,19 @@ on:
           - 12.1
           - 11.0
 
+      RELEASE_NAME:
+        description: 'Android release configuration for OrangeFox 14.1'
+        required: true
+        default: 'ap2a'
+        type: choice
+        options:
+          - ap2a
+          - ap1a
+          - omni
+          - trunk_staging
+          - aosp_current
+          - lineage
+
       DEVICE_TREE:
         description: 'Custom Recovery Tree'
         required: true
@@ -81,6 +94,7 @@ jobs:
         run: |
           echo "::group::OrangeFox build configuration"
           echo "OrangeFox branch : ${{ github.event.inputs.MANIFEST_BRANCH }}"
+          echo "Release name     : ${{ github.event.inputs.RELEASE_NAME }}"
           echo "Device tree      : ${{ github.event.inputs.DEVICE_TREE }}"
           echo "Tree branch      : ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
           echo "Device path      : ${{ github.event.inputs.DEVICE_PATH }}"
@@ -202,14 +216,62 @@ jobs:
 
           DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
           TARGET="${{ github.event.inputs.BUILD_TARGET }}"
+          RELEASE="${{ github.event.inputs.RELEASE_NAME }}"
+          MANIFEST="${{ github.event.inputs.MANIFEST_BRANCH }}"
+          PRODUCT="omni_${DEVICE}"
 
-          FOX_LUNCH="omni_${DEVICE}-eng"
+          # Android 14 / OrangeFox 14.1 uses the product-release-variant
+          # lunch form. Do not invent a legacy combo such as omni_beryl-eng.
+          # AOSP exposes the valid release configs through list_releases.
+          if [ "$MANIFEST" = "14.1" ]; then
+            echo "::group::Available products"
+            list_products | grep -E "(^|_)${DEVICE}$" || true
+            echo "::endgroup::"
 
+            if ! list_products | grep -Fxq "$PRODUCT"; then
+              echo "ERROR: Product '$PRODUCT' is not registered by the synced tree."
+              echo "Available products matching '$DEVICE':"
+              list_products | grep -i "$DEVICE" || true
+              exit 1
+            fi
+
+            echo "::group::Available releases for $PRODUCT"
+            list_releases "$PRODUCT"
+            echo "::endgroup::"
+
+            if ! list_releases "$PRODUCT" | grep -Fxq "$RELEASE"; then
+              echo "ERROR: Release '$RELEASE' is not valid for product '$PRODUCT'."
+              echo "Valid releases are:"
+              list_releases "$PRODUCT"
+              exit 1
+            fi
+
+            # Use the three-argument form so envsetup does not parse the
+            # target as a legacy hyphen-separated combo.
+            FOX_PRODUCT="$PRODUCT"
+            FOX_RELEASE="$RELEASE"
+            FOX_VARIANT="eng"
+            FOX_LUNCH="$PRODUCT-$RELEASE-eng"
+          else
+            # Preserve the original Android 11/12 style target for the
+            # older manifests supported by this workflow.
+            FOX_PRODUCT="omni_${DEVICE}"
+            FOX_RELEASE=""
+            FOX_VARIANT="eng"
+            FOX_LUNCH="${FOX_PRODUCT}-eng"
+          fi
+
+          echo "FOX_PRODUCT=$FOX_PRODUCT" >> "$GITHUB_OUTPUT"
+          echo "FOX_RELEASE=$FOX_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "FOX_VARIANT=$FOX_VARIANT" >> "$GITHUB_OUTPUT"
           echo "FOX_LUNCH=$FOX_LUNCH" >> "$GITHUB_OUTPUT"
           echo "FOX_BUILD_TARGET=${TARGET}" >> "$GITHUB_OUTPUT"
 
-          echo "Lunch target : $FOX_LUNCH"
-          echo "Build target : ${TARGET}image"
+          echo "Lunch product : $FOX_PRODUCT"
+          echo "Lunch release : ${FOX_RELEASE:-legacy}"
+          echo "Lunch variant : $FOX_VARIANT"
+          echo "Lunch target  : $FOX_LUNCH"
+          echo "Build target  : ${TARGET}image"
 
       - name: Building OrangeFox
         run: |
@@ -230,8 +292,18 @@ jobs:
           fi
 
           echo "::group::Lunch"
-          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" \
-            2>&1 | tee "$RUNNER_TEMP/lunch.log"
+          if [ "${{ github.event.inputs.MANIFEST_BRANCH }}" = "14.1" ]; then
+            # AOSP Android 14+ accepts product/release/variant as separate
+            # arguments. This avoids the legacy parser rejecting the combo.
+            lunch \
+              "${{ steps.fox_branch.outputs.FOX_PRODUCT }}" \
+              "${{ steps.fox_branch.outputs.FOX_RELEASE }}" \
+              "${{ steps.fox_branch.outputs.FOX_VARIANT }}" \
+              2>&1 | tee "$RUNNER_TEMP/lunch.log"
+          else
+            lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" \
+              2>&1 | tee "$RUNNER_TEMP/lunch.log"
+          fi
           LUNCH_STATUS=${PIPESTATUS[0]}
           echo "::endgroup::"
 
