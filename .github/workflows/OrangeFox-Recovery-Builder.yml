@@ -297,57 +297,42 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
-          echo "::group::Environment"
-
           source build/envsetup.sh
 
           export ALLOW_MISSING_DEPENDENCIES=true
 
-          echo "ALLOW_MISSING_DEPENDENCIES=$ALLOW_MISSING_DEPENDENCIES"
+          echo "Lunch target: omni_${{ github.event.inputs.DEVICE_NAME }}-eng"
 
-          echo "::endgroup::"
+          lunch "omni_${{ github.event.inputs.DEVICE_NAME }}-eng"
 
-          echo "::group::Lunch"
-
-          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}"
-
-          echo "::endgroup::"
-
-          echo "::group::Clean"
-
+          echo "Cleaning previous build..."
           make clean
 
-          echo "::endgroup::"
+          case "${{ github.event.inputs.BUILD_TARGET }}" in
 
-          echo "::group::Build"
+            vendorboot)
+              echo "Building vendor_boot recovery..."
+              mka adbd vendorbootimage
+              ;;
 
-          if [ "${{ github.event.inputs.BUILD_TARGET }}" = "vendorboot" ]; then
+            boot)
+              echo "Building boot recovery..."
+              mka adbd bootimage
+              ;;
 
-            echo "Building vendor_boot recovery..."
+            recovery)
+              echo "Building recovery image..."
+              mka adbd recoveryimage
+              ;;
 
-            mka adbd vendorbootimage
+            *)
+              echo "ERROR: Unknown BUILD_TARGET:"
+              echo "${{ github.event.inputs.BUILD_TARGET }}"
+              exit 1
+              ;;
 
-          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "boot" ]; then
-
-            echo "Building boot recovery..."
-
-            mka adbd bootimage
-
-          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "recovery" ]; then
-
-            echo "Building recovery image..."
-
-            mka adbd recoveryimage
-
-          else
-
-            echo "ERROR: Unknown build target."
-            exit 1
-
-          fi
-
-          echo "::endgroup::"
-
+          esac
+      
 
       # ============================================================
       # BUILD DATE
