@@ -24,41 +24,42 @@ on:
         default: 'main'
 
       DEVICE_PATH:
-        description: 'Specify your device path.'
+        description: 'Device tree path'
         required: true
         default: 'device/xiaomi/beryl'
 
       DEVICE_NAME:
-        description: 'Specify your Device Codename.'
+        description: 'Device codename'
         required: true
         default: 'beryl'
 
       BUILD_TARGET:
-        description: 'Specify your Build Target'
+        description: 'Build Target'
         required: true
-        default: 'boot'
+        default: 'vendorboot'
         type: choice
         options:
+          - vendorboot
           - boot
           - recovery
-          - vendorboot
 
       LDCHECK:
-        description: 'Path of blobs to check'
+        description: 'Path of blob to check'
         required: true
-        default: 'system/bin/qseecomd'
+        default: 'vendor/bin/hw/android.hardware.boot@1.0-service'
 
       RECOVERY_TAR:
-        description: 'Release recovery.tar For Samsung devices'
-        required: false
+        description: 'Release recovery.tar for Samsung devices'
+        required: true
         default: false
         type: boolean
 
       RECOVERY_INSTALLER:
-        description: 'Include recovery installer zip'
-        type: boolean
+        description: 'Include recovery installer ZIP'
         required: true
         default: true
+        type: boolean
+
 
 jobs:
   build:
@@ -67,28 +68,29 @@ jobs:
 
     if: github.event.repository.owner.id == github.event.sender.id
 
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     permissions:
       contents: write
 
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
 
-      # ------------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------------
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # Display inputs
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # DISPLAY CONFIGURATION
+      # ============================================================
 
       - name: Display Inputs
         run: |
-          echo "::group::Build configuration"
+          echo "::group::OrangeFox build configuration"
 
           echo "OrangeFox branch : ${{ github.event.inputs.MANIFEST_BRANCH }}"
           echo "Device tree      : ${{ github.event.inputs.DEVICE_TREE }}"
@@ -96,30 +98,34 @@ jobs:
           echo "Device path      : ${{ github.event.inputs.DEVICE_PATH }}"
           echo "Device name      : ${{ github.event.inputs.DEVICE_NAME }}"
           echo "Build target     : ${{ github.event.inputs.BUILD_TARGET }}"
-          echo "Recovery ZIP     : ${{ github.event.inputs.RECOVERY_INSTALLER }}"
+          echo "LDCheck          : ${{ github.event.inputs.LDCHECK }}"
+          echo "Installer ZIP    : ${{ github.event.inputs.RECOVERY_INSTALLER }}"
           echo "Samsung TAR      : ${{ github.event.inputs.RECOVERY_TAR }}"
 
           echo "::endgroup::"
 
-      # ------------------------------------------------------------
-      # Cleanup runner
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # CLEAN RUNNER
+      # ============================================================
 
       - name: Clean-up
         uses: rokibhasansagar/slimhub_actions@main
 
-      # ------------------------------------------------------------
-      # Swap
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # SWAP
+      # ============================================================
 
       - name: Swap Space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 24
 
-      # ------------------------------------------------------------
-      # Build environment
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # ANDROID BUILD ENVIRONMENT
+      # ============================================================
 
       - name: Build Environment
         run: |
@@ -136,15 +142,12 @@ jobs:
 
           sudo bash setup/android_build_env.sh
 
-      # ------------------------------------------------------------
-      # OrangeFox manifest
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # ORANGEFOX MANIFEST
+      # ============================================================
 
       - name: Set-up Manifest
-        if: >
-          github.event.inputs.MANIFEST_BRANCH == '11.0' ||
-          github.event.inputs.MANIFEST_BRANCH == '12.1' ||
-          github.event.inputs.MANIFEST_BRANCH == '14.1'
         run: |
           set -e
 
@@ -164,9 +167,10 @@ jobs:
             --branch "${{ github.event.inputs.MANIFEST_BRANCH }}" \
             --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
-      # ------------------------------------------------------------
-      # Clone device tree
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # CLONE BERYL DEVICE TREE
+      # ============================================================
 
       - name: Clone Device Tree
         run: |
@@ -192,9 +196,10 @@ jobs:
           git log -1 --oneline
           echo "::endgroup::"
 
-      # ------------------------------------------------------------
-      # Check tree
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # VERIFY DEVICE TREE
+      # ============================================================
 
       - name: Verify Device Tree
         run: |
@@ -203,46 +208,88 @@ jobs:
           FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
           DEVICE_PATH="$FOX_PATH/${{ github.event.inputs.DEVICE_PATH }}"
 
+          echo "::group::Checking required files"
+
           test -f "$DEVICE_PATH/BoardConfig.mk"
           test -f "$DEVICE_PATH/AndroidProducts.mk"
+          test -f "$DEVICE_PATH/omni_beryl.mk"
+          test -f "$DEVICE_PATH/device.mk"
           test -f "$DEVICE_PATH/vendorsetup.sh"
 
-          echo "Device tree verified."
+          echo "Required device-tree files found."
 
-          echo "::group::Device tree"
-          find "$DEVICE_PATH" -maxdepth 2 -type f | sort
           echo "::endgroup::"
 
-      # ------------------------------------------------------------
-      # Select build command
-      # ------------------------------------------------------------
+          echo "::group::Checking Omni product"
+
+          grep -R \
+            "omni_beryl" \
+            "$DEVICE_PATH/AndroidProducts.mk"
+
+          echo "::endgroup::"
+
+          echo "::group::Checking vendor_boot configuration"
+
+          grep -R \
+            "FOX_VENDOR_BOOT_RECOVERY" \
+            "$DEVICE_PATH/vendorsetup.sh" || true
+
+          grep -R \
+            "BOARD_USES_RECOVERY_AS_BOOT" \
+            "$DEVICE_PATH/BoardConfig.mk" || true
+
+          echo "::endgroup::"
+
+
+      # ============================================================
+      # VERIFY PREBUILT KERNEL / DTB
+      # ============================================================
+
+      - name: Verify Kernel and DTB
+        run: |
+          set -e
+
+          FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          DEVICE_PATH="$FOX_PATH/${{ github.event.inputs.DEVICE_PATH }}"
+
+          echo "::group::Prebuilt files"
+
+          test -f "$DEVICE_PATH/prebuilt/kernel"
+          test -f "$DEVICE_PATH/prebuilt/dtb.img"
+
+          ls -lh \
+            "$DEVICE_PATH/prebuilt/kernel" \
+            "$DEVICE_PATH/prebuilt/dtb.img"
+
+          echo "::endgroup::"
+
+
+      # ============================================================
+      # VERIFY OMNI LUNCH TARGET
+      # ============================================================
 
       - name: Select Build Command
         id: fox_branch
         run: |
           set -e
 
-          BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}"
-          TARGET="${{ github.event.inputs.BUILD_TARGET }}"
           DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+          TARGET="${{ github.event.inputs.BUILD_TARGET }}"
 
-          if [ "$BRANCH" = "11.0" ] || [ "$BRANCH" = "12.1" ]; then
+          echo "FOX_LUNCH=omni_${DEVICE}-eng" >> "$GITHUB_OUTPUT"
+          echo "FOX_BUILD_TARGET=${TARGET}" >> "$GITHUB_OUTPUT"
 
-            echo 'BUILD_COMMAND=lunch twrp_'"$DEVICE"'-eng && make clean && mka adbd '"$TARGET"'image' >> "$GITHUB_OUTPUT"
+          echo "::group::Selected build"
 
-          else
+          echo "Lunch target : omni_${DEVICE}-eng"
+          echo "Build target : ${TARGET}image"
 
-            echo 'BUILD_COMMAND=lunch omni_'"$DEVICE"'-eng && make clean && mka '"$TARGET"'image' ' >> "$GITHUB_OUTPUT"
-
-          fi
-
-          echo "::group::Build command"
-          cat "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
-      # ------------------------------------------------------------
-      # Build OrangeFox
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # BUILD ORANGEFOX
+      # ============================================================
 
       - name: Building OrangeFox
         run: |
@@ -250,15 +297,61 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
+          echo "::group::Environment"
+
           source build/envsetup.sh
 
           export ALLOW_MISSING_DEPENDENCIES=true
 
-          ${{ steps.fox_branch.outputs.BUILD_COMMAND }}
+          echo "ALLOW_MISSING_DEPENDENCIES=$ALLOW_MISSING_DEPENDENCIES"
 
-      # ------------------------------------------------------------
-      # Build date
-      # ------------------------------------------------------------
+          echo "::endgroup::"
+
+          echo "::group::Lunch"
+
+          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}"
+
+          echo "::endgroup::"
+
+          echo "::group::Clean"
+
+          make clean
+
+          echo "::endgroup::"
+
+          echo "::group::Build"
+
+          if [ "${{ github.event.inputs.BUILD_TARGET }}" = "vendorboot" ]; then
+
+            echo "Building vendor_boot recovery..."
+
+            mka adbd vendorbootimage
+
+          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "boot" ]; then
+
+            echo "Building boot recovery..."
+
+            mka adbd bootimage
+
+          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "recovery" ]; then
+
+            echo "Building recovery image..."
+
+            mka adbd recoveryimage
+
+          else
+
+            echo "ERROR: Unknown build target."
+            exit 1
+
+          fi
+
+          echo "::endgroup::"
+
+
+      # ============================================================
+      # BUILD DATE
+      # ============================================================
 
       - name: Set Build Date
         run: |
@@ -272,40 +365,65 @@ jobs:
 
           echo "DEVICE_TREE_URL=$DEVICE_TREE_URL" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------
-      # Find generated OrangeFox image
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # FIND GENERATED IMAGE
+      # ============================================================
 
       - name: Check if Recovery Exists
         run: |
           set -e
 
           FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
-          PRODUCT="${FOX_PATH}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+          PRODUCT="$FOX_PATH/out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
 
-          echo "::group::Searching build output"
+          echo "::group::Build output"
 
-          find "$FOX_PATH/out/target/product/${{ github.event.inputs.DEVICE_NAME }}" \
-            -maxdepth 4 \
+          find "$PRODUCT" \
+            -maxdepth 3 \
             -type f \
             \( \
               -name 'OrangeFox*.img' \
-              -o -name 'recovery.img' \
-              -o -name 'boot.img' \
               -o -name 'vendor_boot.img' \
+              -o -name 'boot.img' \
+              -o -name 'recovery.img' \
             \) \
-            -print || true
+            -print
 
           echo "::endgroup::"
 
-          IMAGE="$(find "$PRODUCT" \
-            -maxdepth 2 \
-            -type f \
-            -name 'OrangeFox*.img' \
-            | head -n 1)"
+          IMAGE=""
+
+          if [ "${{ github.event.inputs.BUILD_TARGET }}" = "vendorboot" ]; then
+
+            if [ -f "$PRODUCT/vendor_boot.img" ]; then
+              IMAGE="$PRODUCT/vendor_boot.img"
+            fi
+
+          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "boot" ]; then
+
+            if [ -f "$PRODUCT/boot.img" ]; then
+              IMAGE="$PRODUCT/boot.img"
+            fi
+
+          elif [ "${{ github.event.inputs.BUILD_TARGET }}" = "recovery" ]; then
+
+            if [ -f "$PRODUCT/recovery.img" ]; then
+              IMAGE="$PRODUCT/recovery.img"
+            fi
+
+          fi
 
           if [ -z "$IMAGE" ]; then
-            echo "ERROR: OrangeFox image was not produced."
+            IMAGE="$(find "$PRODUCT" \
+              -maxdepth 2 \
+              -type f \
+              -name 'OrangeFox*.img' \
+              | head -n 1)"
+          fi
+
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: No recovery image was produced."
             exit 1
           fi
 
@@ -315,15 +433,18 @@ jobs:
           echo "CHECK_IMG_IS_OK=true" >> "$GITHUB_ENV"
           echo "FILE_PATH=$PRODUCT" >> "$GITHUB_ENV"
 
+          echo "BUILT_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
           MD5_IMG="$(md5sum "$IMAGE" | cut -d ' ' -f 1)"
           SHA256_IMG="$(sha256sum "$IMAGE" | cut -d ' ' -f 1)"
 
           echo "MD5_IMG=$MD5_IMG" >> "$GITHUB_ENV"
           echo "SHA256_IMG=$SHA256_IMG" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------
-      # Rename recovery image
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # NORMALIZE IMAGE NAME
+      # ============================================================
 
       - name: Rename the Recovery
         if: env.CHECK_IMG_IS_OK == 'true'
@@ -332,49 +453,78 @@ jobs:
 
           cd "${{ env.FILE_PATH }}"
 
-          IMAGE="$(find . \
-            -maxdepth 1 \
-            -type f \
-            -name 'OrangeFox*.img' \
-            | head -n 1)"
-
-          if [ -z "$IMAGE" ]; then
-            echo "ERROR: OrangeFox image not found."
-            exit 1
-          fi
+          IMAGE="${{ env.BUILT_IMAGE }}"
 
           case "${{ github.event.inputs.BUILD_TARGET }}" in
 
+            vendorboot)
+              OUTPUT="vendor_boot.img"
+              RECOVERY_TYPE="vendor_boot"
+              ;;
+
             boot)
-              mv "$IMAGE" boot.img
-              echo "RECOVERY_TYPE=boot" >> "$GITHUB_ENV"
-              echo "boot.img created."
+              OUTPUT="boot.img"
+              RECOVERY_TYPE="boot"
               ;;
 
             recovery)
-              mv "$IMAGE" recovery.img
-              echo "RECOVERY_TYPE=recovery" >> "$GITHUB_ENV"
-              echo "recovery.img created."
-              ;;
-
-            vendorboot)
-              mv "$IMAGE" vendor_boot.img
-              echo "RECOVERY_TYPE=vendor_boot" >> "$GITHUB_ENV"
-              echo "vendor_boot.img created."
+              OUTPUT="recovery.img"
+              RECOVERY_TYPE="recovery"
               ;;
 
             *)
-              echo "ERROR: Invalid BUILD_TARGET."
+              echo "ERROR: Invalid build target."
               exit 1
               ;;
 
           esac
 
-          ls -lh *.img
+          if [ "$IMAGE" != "${{ env.FILE_PATH }}/$OUTPUT" ]; then
 
-      # ------------------------------------------------------------
-      # Create recovery installer ZIP
-      # ------------------------------------------------------------
+            rm -f "$OUTPUT"
+
+            cp "$IMAGE" "$OUTPUT"
+
+          fi
+
+          echo "RECOVERY_TYPE=$RECOVERY_TYPE" >> "$GITHUB_ENV"
+          echo "OUTPUT_IMAGE=$OUTPUT" >> "$GITHUB_ENV"
+
+          echo "::group::Final image"
+
+          ls -lh "$OUTPUT"
+
+          file "$OUTPUT" || true
+
+          echo "::endgroup::"
+
+
+      # ============================================================
+      # VERIFY VENDOR_BOOT HEADER
+      # ============================================================
+
+      - name: Verify Vendor Boot Image
+        if: ${{ env.CHECK_IMG_IS_OK == 'true' && env.RECOVERY_TYPE == 'vendor_boot' }}
+        run: |
+          set -e
+
+          cd "${{ env.FILE_PATH }}"
+
+          echo "::group::vendor_boot.img"
+
+          ls -lh vendor_boot.img
+
+          echo "SHA256:"
+          sha256sum vendor_boot.img
+
+          echo "::endgroup::"
+
+          echo "vendor_boot.img successfully produced."
+
+
+      # ============================================================
+      # CREATE RECOVERY INSTALLER ZIP
+      # ============================================================
 
       - name: Include Recovery Installer
         if: ${{ github.event.inputs.RECOVERY_INSTALLER == 'true' && env.CHECK_IMG_IS_OK == 'true' }}
@@ -383,20 +533,21 @@ jobs:
 
           cd "${{ env.FILE_PATH }}"
 
-          echo "::group::Downloading recovery installer"
+          echo "::group::Download recovery installer"
 
           wget -q --show-progress \
             "https://github.com/kinguser981/recovery-installer/releases/download/11256427880/recovery-installer.zip" \
             -O recovery-installer-base.zip
 
-          echo "::endgroup::"
-
           test -s recovery-installer-base.zip
 
+          echo "::endgroup::"
+
           rm -rf installer_tmp
+
           mkdir -p installer_tmp
 
-          echo "::group::Extracting installer"
+          echo "::group::Extract installer"
 
           unzip -q \
             recovery-installer-base.zip \
@@ -404,17 +555,19 @@ jobs:
 
           echo "::endgroup::"
 
-          IMAGE="${{ env.RECOVERY_TYPE }}.img"
+          IMAGE="${{ env.OUTPUT_IMAGE }}"
 
           test -f "$IMAGE"
 
+          echo "Adding $IMAGE to installer..."
+
           cp "$IMAGE" \
-             "installer_tmp/$IMAGE"
+            "installer_tmp/$IMAGE"
 
           echo "::group::Installer contents"
 
           find installer_tmp \
-            -maxdepth 4 \
+            -maxdepth 5 \
             -type f \
             -print \
             | sort
@@ -440,9 +593,10 @@ jobs:
 
           echo "::endgroup::"
 
-      # ------------------------------------------------------------
-      # Samsung TAR
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # SAMSUNG TAR
+      # ============================================================
 
       - name: Recovery to tar for Samsung devices
         if: ${{ github.event.inputs.RECOVERY_TAR == 'true' && env.CHECK_IMG_IS_OK == 'true' }}
@@ -453,13 +607,14 @@ jobs:
 
           tar -cvf \
             "${{ env.RECOVERY_TYPE }}.tar" \
-            "${{ env.RECOVERY_TYPE }}.img"
+            "${{ env.OUTPUT_IMAGE }}"
 
           ls -lh "${{ env.RECOVERY_TYPE }}.tar"
 
-      # ------------------------------------------------------------
-      # Generate checksums
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # CHECKSUMS
+      # ============================================================
 
       - name: Generate Checksums
         if: env.CHECK_IMG_IS_OK == 'true'
@@ -468,43 +623,41 @@ jobs:
 
           cd "${{ env.FILE_PATH }}"
 
-          echo "::group::Checksums"
+          rm -f SHA256SUMS
 
           sha256sum \
-            "${{ env.RECOVERY_TYPE }}.img"
+            "${{ env.OUTPUT_IMAGE }}" \
+            >> SHA256SUMS
 
           if [ -f recovery-installer.zip ]; then
-            sha256sum recovery-installer.zip
+            sha256sum \
+              recovery-installer.zip \
+              >> SHA256SUMS
           fi
 
           if [ -f "${{ env.RECOVERY_TYPE }}.tar" ]; then
-            sha256sum "${{ env.RECOVERY_TYPE }}.tar"
+            sha256sum \
+              "${{ env.RECOVERY_TYPE }}.tar" \
+              >> SHA256SUMS
           fi
+
+          echo "::group::SHA256SUMS"
+
+          cat SHA256SUMS
 
           echo "::endgroup::"
 
-          {
-            sha256sum "${{ env.RECOVERY_TYPE }}.img"
 
-            if [ -f recovery-installer.zip ]; then
-              sha256sum recovery-installer.zip
-            fi
-
-            if [ -f "${{ env.RECOVERY_TYPE }}.tar" ]; then
-              sha256sum "${{ env.RECOVERY_TYPE }}.tar"
-            fi
-          } > SHA256SUMS
-
-      # ------------------------------------------------------------
-      # Upload GitHub release
-      # ------------------------------------------------------------
+      # ============================================================
+      # GITHUB RELEASE
+      # ============================================================
 
       - name: Upload to Release
         if: env.CHECK_IMG_IS_OK == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
+            ${{ env.FILE_PATH }}/${{ env.OUTPUT_IMAGE }}
             ${{ env.FILE_PATH }}/recovery-installer.zip
             ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.tar
             ${{ env.FILE_PATH }}/OrangeFox*.zip
@@ -515,13 +668,13 @@ jobs:
           tag_name: ${{ github.run_id }}
 
           body: |
-            # OrangeFox Recovery
+            # Unofficial OrangeFox Recovery
 
             Device: ${{ github.event.inputs.DEVICE_NAME }}
 
-            Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
+            Target: ${{ env.RECOVERY_TYPE }}
 
-            Build target: ${{ github.event.inputs.BUILD_TARGET }}
+            OrangeFox branch: ${{ github.event.inputs.MANIFEST_BRANCH }}
 
             Device tree:
             ${{ env.DEVICE_TREE_URL }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }}
@@ -530,7 +683,7 @@ jobs:
             ${{ env.DEVICE_TREE_URL }}/commit/${{ env.COMMIT_ID }}
 
             Image:
-            ${{ env.RECOVERY_TYPE }}.img
+            ${{ env.OUTPUT_IMAGE }}
 
             MD5:
             ${{ env.MD5_IMG }}
@@ -541,9 +694,10 @@ jobs:
             Recovery installer:
             ${{ github.event.inputs.RECOVERY_INSTALLER }}
 
-      # ------------------------------------------------------------
-      # Release ramdisk recovery
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # RELEASE RAMDISK RECOVERY
+      # ============================================================
 
       - name: Release ramdisk-recovery
         if: env.CHECK_IMG_IS_OK == 'true'
@@ -558,8 +712,10 @@ jobs:
           tag_name: ${{ github.run_id }}
 
           body: |
-            Target: ${{ env.RECOVERY_TYPE }}.img
+            Target: ${{ env.OUTPUT_IMAGE }}
+
             Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
+
             Device: ${{ github.event.inputs.DEVICE_NAME }}
 
             Device tree:
@@ -571,34 +727,78 @@ jobs:
             MD5:
             ${{ env.MD5_IMG }}
 
-      # ------------------------------------------------------------
-      # LDCheck
-      # ------------------------------------------------------------
+            SHA-256:
+            ${{ env.SHA256_IMG }}
+
+
+      # ============================================================
+      # LD CHECK
+      # ============================================================
 
       - name: Run LDCheck
+        if: env.CHECK_IMG_IS_OK == 'true'
         run: |
           set +e
 
-          cd tools
+          FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+
+          cd "$FOX_PATH/tools"
 
           if [ -f libneeds ]; then
-            cp -f libneeds \
+            cp -f \
+              libneeds \
               "${{ env.FILE_PATH }}/recovery/root/"
           fi
 
           if [ -f ldcheck ]; then
-            cp -f ldcheck \
+            cp -f \
+              ldcheck \
               "${{ env.FILE_PATH }}/recovery/root/"
           fi
 
           cd "${{ env.FILE_PATH }}/recovery/root/"
 
           if [ -f ldcheck ]; then
+
+            echo "::group::LDCheck"
+
             python3 ldcheck \
               -p system/lib64:vendor/lib64:system/lib:vendor/lib \
               -d "${{ github.event.inputs.LDCHECK }}"
+
+            echo "::endgroup::"
+
           else
+
             echo "LDCheck tool not found."
+
           fi
 
-          echo "Done checking missing dependencies."
+          echo "LDCheck completed."
+
+
+      # ============================================================
+      # FINAL SUMMARY
+      # ============================================================
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "=============================================="
+          echo " OrangeFox beryl build"
+          echo "=============================================="
+
+          echo "Device       : ${{ github.event.inputs.DEVICE_NAME }}"
+          echo "Manifest     : ${{ github.event.inputs.MANIFEST_BRANCH }}"
+          echo "Build target : ${{ github.event.inputs.BUILD_TARGET }}"
+          echo "Lunch        : omni_${{ github.event.inputs.DEVICE_NAME }}-eng"
+
+          if [ -n "${{ env.FILE_PATH }}" ] && [ -d "${{ env.FILE_PATH }}" ]; then
+
+            echo ""
+            echo "Output directory:"
+            ls -lah "${{ env.FILE_PATH }}"
+
+          fi
+
+          echo "=============================================="
