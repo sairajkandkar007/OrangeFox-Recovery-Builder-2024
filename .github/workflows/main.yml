@@ -217,13 +217,28 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
-          source build/envsetup.sh 2>&1 | tee "$RUNNER_TEMP/envsetup.log"
           export ALLOW_MISSING_DEPENDENCIES=true
+
+          echo "::group::Envsetup"
+          source build/envsetup.sh
+          ENVSETUP_STATUS=$?
+          echo "::endgroup::"
+
+          if [ "$ENVSETUP_STATUS" -ne 0 ]; then
+            echo "ERROR: build/envsetup.sh failed."
+            exit "$ENVSETUP_STATUS"
+          fi
 
           echo "::group::Lunch"
           lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" \
             2>&1 | tee "$RUNNER_TEMP/lunch.log"
+          LUNCH_STATUS=${PIPESTATUS[0]}
           echo "::endgroup::"
+
+          if [ "$LUNCH_STATUS" -ne 0 ]; then
+            echo "ERROR: lunch failed."
+            exit "$LUNCH_STATUS"
+          fi
 
           echo "::group::API level / platform audit"
 
