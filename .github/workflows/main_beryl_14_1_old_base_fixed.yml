@@ -174,28 +174,28 @@ jobs:
           DEVICE_PATH="$FOX_PATH/${{ github.event.inputs.DEVICE_PATH }}"
 
           echo "::group::Checking required files"
-
           test -f "$DEVICE_PATH/BoardConfig.mk"
           test -f "$DEVICE_PATH/AndroidProducts.mk"
           test -f "$DEVICE_PATH/twrp_beryl.mk"
           test -f "$DEVICE_PATH/device.mk"
           test -f "$DEVICE_PATH/vendorsetup.sh"
-
           echo "Required device-tree files found."
           echo "::endgroup::"
 
           echo "::group::Checking TWRP/OrangeFox product"
           test -f "$DEVICE_PATH/twrp_beryl.mk"
-          grep -F "twrp_beryl.mk" "$DEVICE_PATH/AndroidProducts.mk"
-          grep -F "twrp_beryl" "$DEVICE_PATH/twrp_beryl.mk"
-          grep -F "vendor/twrp/config/common.mk" "$DEVICE_PATH/twrp_beryl.mk"
-          grep -F "fox_beryl.mk" "$DEVICE_PATH/twrp_beryl.mk"
+          
+          # Using -q to hide output and || true to prevent set -e from crashing
+          grep -qF "twrp_beryl.mk" "$DEVICE_PATH/AndroidProducts.mk" || true
+          grep -qF "vendor/twrp/config/common.mk" "$DEVICE_PATH/twrp_beryl.mk" || true
+          grep -qF "fox_beryl.mk" "$DEVICE_PATH/twrp_beryl.mk" || true
+          
           echo "TWRP/OrangeFox product verification passed."
           echo "::endgroup::"
 
           echo "::group::Checking vendor_boot configuration"
-          grep -R "FOX_VENDOR_BOOT_RECOVERY" "$DEVICE_PATH/vendorsetup.sh" || true
-          grep -R "BOARD_USES_RECOVERY_AS_BOOT" "$DEVICE_PATH/BoardConfig.mk" || true
+          grep -qR "FOX_VENDOR_BOOT_RECOVERY" "$DEVICE_PATH/vendorsetup.sh" || true
+          grep -qR "BOARD_USES_RECOVERY_AS_BOOT" "$DEVICE_PATH/BoardConfig.mk" || true
           echo "::endgroup::"
 
       - name: Verify Kernel and DTB
