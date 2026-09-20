@@ -130,20 +130,19 @@ jobs:
         run: |
           set -e
 
-          FOX_DIR="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
-          mkdir -p "$FOX_DIR"
-          cd "$FOX_DIR"
+          mkdir -p "${GITHUB_WORKSPACE}/OrangeFox"
+          cd "${GITHUB_WORKSPACE}/OrangeFox"
 
           git config --global user.name "OrangeFox Builder"
           git config --global user.email "actions@github.com"
 
-          echo "::group::Repo Init"
-          repo init -u https://gitlab.com/OrangeFox/manifest.git -b "${{ github.event.inputs.MANIFEST_BRANCH }}" --depth=1
-          echo "::endgroup::"
+          git clone https://gitlab.com/OrangeFox/sync.git
 
-          echo "::group::Repo Sync"
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
-          echo "::endgroup::"
+          cd sync
+
+          ./orangefox_sync.sh \
+            --branch "${{ github.event.inputs.MANIFEST_BRANCH }}" \
+            --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
       - name: Clone Device Tree
         run: |
