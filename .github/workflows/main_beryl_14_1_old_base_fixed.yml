@@ -130,19 +130,20 @@ jobs:
         run: |
           set -e
 
-          mkdir -p "${GITHUB_WORKSPACE}/OrangeFox"
-          cd "${GITHUB_WORKSPACE}/OrangeFox"
+          FOX_DIR="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          mkdir -p "$FOX_DIR"
+          cd "$FOX_DIR"
 
           git config --global user.name "OrangeFox Builder"
           git config --global user.email "actions@github.com"
 
-          git clone https://gitlab.com/OrangeFox/sync.git
+          echo "::group::Repo Init"
+          repo init -u https://gitlab.com/OrangeFox/manifest.git -b "${{ github.event.inputs.MANIFEST_BRANCH }}" --depth=1
+          echo "::endgroup::"
 
-          cd sync
-
-          ./orangefox_sync.sh \
-            --branch "${{ github.event.inputs.MANIFEST_BRANCH }}" \
-            --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          echo "::group::Repo Sync"
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
+          echo "::endgroup::"
 
       - name: Clone Device Tree
         run: |
@@ -184,12 +185,9 @@ jobs:
 
           echo "::group::Checking TWRP/OrangeFox product"
           test -f "$DEVICE_PATH/twrp_beryl.mk"
-          
-          # Using -q to hide output and || true to prevent set -e from crashing
           grep -qF "twrp_beryl.mk" "$DEVICE_PATH/AndroidProducts.mk" || true
           grep -qF "vendor/twrp/config/common.mk" "$DEVICE_PATH/twrp_beryl.mk" || true
           grep -qF "fox_beryl.mk" "$DEVICE_PATH/twrp_beryl.mk" || true
-          
           echo "TWRP/OrangeFox product verification passed."
           echo "::endgroup::"
 
@@ -251,7 +249,7 @@ jobs:
 
       - name: Building OrangeFox
         run: |
-          set -o pipefail
+          set -e
 
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
 
@@ -259,91 +257,45 @@ jobs:
 
           echo "::group::Envsetup"
           source build/envsetup.sh
-          ENVSETUP_STATUS=$?
           echo "::endgroup::"
-
-          if [ "$ENVSETUP_STATUS" -ne 0 ]; then
-            echo "ERROR: build/envsetup.sh failed."
-            exit "$ENVSETUP_STATUS"
-          fi
 
           echo "::group::Lunch"
-          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" 2>&1 | tee "$RUNNER_TEMP/lunch.log"
-          LUNCH_STATUS=${PIPESTATUS[0]}
+          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}"
           echo "::endgroup::"
 
-          if [ "$LUNCH_STATUS" -ne 0 ]; then
-            echo "ERROR: lunch failed."
-            echo "---- Registered COMMON_LUNCH_CHOICES (if available) ----"
-            get_build_var COMMON_LUNCH_CHOICES 2>/dev/null || true
-            echo "---- Device AndroidProducts.mk ----"
-            cat "device/xiaomi/beryl/AndroidProducts.mk" 2>/dev/null || true
-            echo "---- Device makefiles ----"
-            find "device/xiaomi/beryl" -maxdepth 1 -type f \
-              \( -name '*_beryl.mk' -o -name 'AndroidProducts.mk' \) \
-              -print 2>/dev/null || true
-            exit "$LUNCH_STATUS"
-          fi
-
           echo "::group::API level / platform audit"
-
-          for VAR in \
-            PLATFORM_VERSION \
-            PLATFORM_SDK_VERSION \
-            PLATFORM_VERSION_CODENAME \
-            PLATFORM_SECURITY_PATCH \
-            PRODUCT_SHIPPING_API_LEVEL \
-            TARGET_PLATFORM_VERSION \
-            TARGET_PLATFORM_VERSION_CODENAME
-          do
+          for VAR in PLATFORM_VERSION PLATFORM_SDK_VERSION PLATFORM_VERSION_CODENAME PLATFORM_SECURITY_PATCH PRODUCT_SHIPPING_API_LEVEL TARGET_PLATFORM_VERSION TARGET_PLATFORM_VERSION_CODENAME; do
             printf '%-40s = ' "$VAR"
             get_build_var "$VAR" 2>/dev/null || true
           done
-
           echo "::endgroup::"
 
           echo "::group::Vendor boot / recovery audit"
-
-          for VAR in \
-            FOX_VENDOR_BOOT_RECOVERY \
-            BOARD_BOOT_HEADER_VERSION \
-            BOARD_BOOTIMG_HEADER_VERSION \
-            BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE \
-            BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE \
-            BOARD_RECOVERYIMAGE_PARTITION_SIZE
-          do
+          for VAR in FOX_VENDOR_BOOT_RECOVERY BOARD_BOOT_HEADER_VERSION BOARD_BOOTIMG_HEADER_VERSION BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE BOARD_RECOVERYIMAGE_PARTITION_SIZE; do
             printf '%-40s = ' "$VAR"
             get_build_var "$VAR" 2>/dev/null || true
           done
-
-          echo "::endgroup::"
-
-          echo "::group::Lunch variables"
-          get_build_var TARGET_PRODUCT || true
-          get_build_var TARGET_DEVICE || true
-          get_build_var TARGET_BUILD_VARIANT || true
           echo "::endgroup::"
 
           echo "::group::Clean"
-          make clean 2>&1 | tee "$RUNNER_TEMP/clean.log"
+          make clean
           echo "::endgroup::"
 
           BUILD_TARGET="${{ github.event.inputs.BUILD_TARGET }}"
-
           echo "Selected BUILD_TARGET: $BUILD_TARGET"
 
           case "$BUILD_TARGET" in
             vendorboot)
               echo "Building vendor_boot recovery..."
-              mka adbd vendorbootimage 2>&1 | tee "$RUNNER_TEMP/build.log"
+              mka adbd vendorbootimage
               ;;
             boot)
               echo "Building boot recovery..."
-              mka adbd bootimage 2>&1 | tee "$RUNNER_TEMP/build.log"
+              mka adbd bootimage
               ;;
             recovery)
               echo "Building recovery image..."
-              mka adbd recoveryimage 2>&1 | tee "$RUNNER_TEMP/build.log"
+              mka adbd recoveryimage
               ;;
             *)
               echo "ERROR: Unknown BUILD_TARGET: $BUILD_TARGET"
