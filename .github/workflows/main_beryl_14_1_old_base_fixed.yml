@@ -185,10 +185,12 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Checking TWRP/OrangeFox product"
+          test -f "$DEVICE_PATH/twrp_beryl.mk"
           grep -F "twrp_beryl.mk" "$DEVICE_PATH/AndroidProducts.mk"
           grep -F "twrp_beryl" "$DEVICE_PATH/twrp_beryl.mk"
           grep -F "vendor/twrp/config/common.mk" "$DEVICE_PATH/twrp_beryl.mk"
           grep -F "fox_beryl.mk" "$DEVICE_PATH/twrp_beryl.mk"
+          echo "TWRP/OrangeFox product verification passed."
           echo "::endgroup::"
 
           echo "::group::Checking vendor_boot configuration"
@@ -221,20 +223,18 @@ jobs:
           TARGET="${{ github.event.inputs.BUILD_TARGET }}"
           RELEASE="${{ github.event.inputs.RELEASE_NAME }}"
           MANIFEST="${{ github.event.inputs.MANIFEST_BRANCH }}"
+          VARIANT="eng"
 
-          # OrangeFox 14.1 uses the product-release-variant lunch format.
-          # The beryl tree registers twrp_beryl as its product.
           if [ "$MANIFEST" = "14.1" ]; then
             FOX_PRODUCT="twrp_${DEVICE}"
             FOX_RELEASE="$RELEASE"
-            FOX_VARIANT="eng"
-            FOX_LUNCH="$FOX_PRODUCT-$FOX_RELEASE-$FOX_VARIANT"
+            FOX_VARIANT="$VARIANT"
+            FOX_LUNCH="${FOX_PRODUCT}-${FOX_RELEASE}-${FOX_VARIANT}"
           else
-            # Preserve the original Android 11/12 style target for older manifests.
             FOX_PRODUCT="omni_${DEVICE}"
             FOX_RELEASE=""
-            FOX_VARIANT="eng"
-            FOX_LUNCH="${FOX_PRODUCT}-eng"
+            FOX_VARIANT="$VARIANT"
+            FOX_LUNCH="${FOX_PRODUCT}-${FOX_VARIANT}"
           fi
 
           echo "FOX_PRODUCT=$FOX_PRODUCT" >> "$GITHUB_OUTPUT"
@@ -268,15 +268,20 @@ jobs:
           fi
 
           echo "::group::Lunch"
-          # Android 14+/OrangeFox 14.1 accepts the product-release-variant
-          # target as one argument, e.g. twrp_beryl-ap2a-eng.
-          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" \
-            2>&1 | tee "$RUNNER_TEMP/lunch.log"
+          lunch "${{ steps.fox_branch.outputs.FOX_LUNCH }}" 2>&1 | tee "$RUNNER_TEMP/lunch.log"
           LUNCH_STATUS=${PIPESTATUS[0]}
           echo "::endgroup::"
 
           if [ "$LUNCH_STATUS" -ne 0 ]; then
             echo "ERROR: lunch failed."
+            echo "---- Registered COMMON_LUNCH_CHOICES (if available) ----"
+            get_build_var COMMON_LUNCH_CHOICES 2>/dev/null || true
+            echo "---- Device AndroidProducts.mk ----"
+            cat "device/xiaomi/beryl/AndroidProducts.mk" 2>/dev/null || true
+            echo "---- Device makefiles ----"
+            find "device/xiaomi/beryl" -maxdepth 1 -type f \
+              \( -name '*_beryl.mk' -o -name 'AndroidProducts.mk' \) \
+              -print 2>/dev/null || true
             exit "$LUNCH_STATUS"
           fi
 
@@ -646,7 +651,12 @@ jobs:
           echo "Device       : ${{ github.event.inputs.DEVICE_NAME }}"
           echo "Manifest     : ${{ github.event.inputs.MANIFEST_BRANCH }}"
           echo "Build target : ${{ github.event.inputs.BUILD_TARGET }}"
-          echo "Lunch        : twrp_${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.RELEASE_NAME }}-eng"
+          
+          if [ "${{ github.event.inputs.MANIFEST_BRANCH }}" = "14.1" ]; then
+            echo "Lunch        : twrp_${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.RELEASE_NAME }}-eng"
+          else
+            echo "Lunch        : omni_${{ github.event.inputs.DEVICE_NAME }}-eng"
+          fi
 
           if [ -n "${{ env.FILE_PATH }}" ] && [ -d "${{ env.FILE_PATH }}" ]; then
             echo ""
