@@ -166,6 +166,55 @@ jobs:
           git log -1 --oneline
           echo "::endgroup::"
 
+      - name: Fix SELinux Policy Location
+        run: |
+          set -e
+
+          FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+          DEVICE_PATH="$FOX_PATH/${{ github.event.inputs.DEVICE_PATH }}"
+
+          SOURCE="$DEVICE_PATH/recovery/root/sepolicy"
+          DEST="$DEVICE_PATH/sepolicy"
+
+          echo "::group::SELinux policy location"
+
+          if [ -d "$SOURCE" ]; then
+            echo "Found misplaced SELinux policy directory:"
+            echo "  $SOURCE"
+
+            echo ""
+            echo "Files before move:"
+            find "$SOURCE" -maxdepth 1 -type f -print
+
+            # Preserve the existing root-level sepolicy tree.
+            mkdir -p "$DEST"
+
+            # Copy the misplaced policy files into the root-level
+            # sepolicy directory without deleting existing files.
+            cp -a "$SOURCE"/. "$DEST"/
+
+            # recovery/root is only for recovery ramdisk files.
+            rm -rf "$SOURCE"
+
+            echo ""
+            echo "SELinux policy moved to:"
+            echo "  $DEST"
+          else
+            echo "No recovery/root/sepolicy directory found."
+          fi
+
+          echo ""
+          echo "Root-level SELinux policy tree:"
+          find "$DEST" -maxdepth 2 -type f -print 2>/dev/null || true
+
+          if [ -d "$DEVICE_PATH/recovery/root/sepolicy" ]; then
+            echo ""
+            echo "ERROR: recovery/root/sepolicy still exists."
+            exit 1
+          fi
+
+          echo "::endgroup::"
+
       - name: Verify Device Tree
         run: |
           set -e
@@ -180,6 +229,20 @@ jobs:
           test -f "$DEVICE_PATH/device.mk"
           test -f "$DEVICE_PATH/vendorsetup.sh"
           echo "Required device-tree files found."
+          echo "::endgroup::"
+
+          echo "::group::Checking SELinux layout"
+
+          test -d "$DEVICE_PATH/sepolicy"
+
+          if [ -d "$DEVICE_PATH/recovery/root/sepolicy" ]; then
+            echo "ERROR: SELinux policy remains under recovery/root."
+            exit 1
+          fi
+
+          echo "Root-level sepolicy directory:"
+          find "$DEVICE_PATH/sepolicy" -maxdepth 2 -type f -print
+
           echo "::endgroup::"
 
           echo "::group::Checking TWRP/OrangeFox product"
@@ -263,7 +326,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::API level / platform audit"
-          for VAR in PLATFORM_VERSION PLATFORM_SDK_VERSION PLATFORM_VERSION_CODENAME PLATFORM_SECURITY_PATCH PRODUCT_SHIPPING_API_LEVEL TARGET_PLATFORM_VERSION TARGET_PLATFORM_VERSION_CODENAME; do
+          for VAR in PLATFORM_VERSION PLATFORM_SDK_VERSION PLATFORM_VERSION_CODENAME PRODUCT_SHIPPING_API_LEVEL TARGET_PLATFORM_VERSION TARGET_PLATFORM_VERSION_CODENAME; do
             printf '%-40s = ' "$VAR"
             get_build_var "$VAR" 2>/dev/null || true
           done
@@ -556,10 +619,10 @@ jobs:
             Device: ${{ github.event.inputs.DEVICE_NAME }}
 
             Device tree:
-            ${{ env.DEVICE_TREE_URL }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+            ${{ env.DEVICE_TREE_URL }}/tree/${{ env.DEVICE_TREE_BRANCH }}
 
             Device tree commit:
-            ${{ env.DEVICE_TREE_URL }}/commit/${{ env.COMMIT_ID }}
+            ${{ env.COMMIT_ID }}
 
             MD5: ${{ env.MD5_IMG }}
             SHA-256: ${{ env.SHA256_IMG }}
@@ -602,7 +665,7 @@ jobs:
           echo "Device       : ${{ github.event.inputs.DEVICE_NAME }}"
           echo "Manifest     : ${{ github.event.inputs.MANIFEST_BRANCH }}"
           echo "Build target : ${{ github.event.inputs.BUILD_TARGET }}"
-          
+
           if [ "${{ github.event.inputs.MANIFEST_BRANCH }}" = "14.1" ]; then
             echo "Lunch        : twrp_${{ github.event.inputs.DEVICE_NAME }}-${{ github.event.inputs.RELEASE_NAME }}-eng"
           else
